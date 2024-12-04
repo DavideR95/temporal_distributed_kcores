@@ -1,0 +1,40 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'kcore'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=temporal_montresor",
+                    "--package=temporal_montresor"
+                ],
+                "filter": {
+                    "name": "temporal_montresor",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "${input:graph}",
+                "${input:snaplen}"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "graph",
+            "type": "promptString",
+            "description": "Path del grafo di input",
+            "default": "/media/hd/rucci-hd/dataset/temporal/as-733/as-733-complete.txt"
+        },
+        {
+            "id": "snaplen",
+            "type": "promptString",
+            "description": "Lunghezza in secondi degli snapshot",
+            "default": "86400"
+        }
+    ]
+}
