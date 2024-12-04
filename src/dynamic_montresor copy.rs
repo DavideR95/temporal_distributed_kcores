@@ -18,8 +18,8 @@ where
     count: Vec<usize>,
     estimate: HashMap<T, (usize, usize)>, // First value: estimate, second: timestamp
     activation_function: F,
-    reset: bool,
     time: usize,
+    activated: bool,
 }
 
 impl<T, F> AliveNode<T, F>
@@ -45,8 +45,8 @@ where
             count: vec![],
             memory_size: _memory_size,
             activation_function: af,
-            reset: false,
             time: 0,
+            activated: false,
         }
     }
 
@@ -56,6 +56,10 @@ where
 
     pub fn set_id(&mut self, id: T) {
         self.id = Some(id);
+    }
+
+    pub fn change_activation_function(&mut self, f: F) {
+        self.activation_function = f;
     }
 
     pub fn deg(&self) -> usize {
@@ -86,6 +90,20 @@ where
 
     pub fn advance_time(&mut self) {
         let mut to_remove = vec![];
+        // if self.id.unwrap_or(0.into()) == 6498.into() {
+        //     print!(
+        //         "Nodo: {} corenes: {} [",
+        //         self.get_id().unwrap(),
+        //         self.coreness
+        //     );
+        //     for neigh in &self.neighbors {
+        //         print!("{} - {:} {}, ", neigh.0, neigh.1, self.apply_f(neigh.1));
+        //     }
+        //     print!("la sua estimate è: {:?}", self.estimate);
+        //     println!("]");
+        // }
+
+        let old_degree = self.deg();
 
         for (neighbor, bitvec) in self.neighbors.iter_mut() {
             assert!(bitvec.len() == self.memory_size);
@@ -101,7 +119,27 @@ where
         }
 
         self.time += 1;
+
+        //if self.deg() != old_degree {
+        //    if self.deg() > 0 {
+        //self.coreness = self.deg();
+        //    } else {
         self.coreness = usize::MAX;
+        //    }
+        // }
+
+        // if self.id.unwrap_or(0.into()) == 6498.into() {
+        //     print!(
+        //         "E DOPO È Nodo: {} corenes: {} [",
+        //         self.get_id().unwrap(),
+        //         self.coreness
+        //     );
+        //     for neigh in &self.neighbors {
+        //         print!("{} - {:} {}, ", neigh.0, neigh.1, self.apply_f(neigh.1));
+        //     }
+        //     print!("la sua estimate è: {:?}", self.estimate);
+        //     println!("]");
+        // }
     }
 
     pub fn add_neighbor_latest_time(&mut self, neighbor: T) {
@@ -130,25 +168,23 @@ where
                 bitvec
             });
 
-        self.count.resize(self.estimate.len() + 1, 0);
+        self.count.resize(self.neighbors.len() + 1, 0);
     }
 
     pub fn reset(&mut self) {
-        // if self.id.is_none() {
-        //     return;
-        // }
-        // self.reset = true;
-        if self.deg() > 0 {
-            self.coreness = self.deg();
-            self.changed = true;
-        } else {
-            // self.coreness = usize::MAX;
+        if self.id.is_none() {
+            return;
         }
+        // if self.id.unwrap() == 6498.into() {
+        //     eprintln!("Weeee");
+        // }
+        // if self.deg() > 0 {
+        //     self.coreness = self.deg();
+        //     self.changed = true;
+        // } else {
+        self.coreness = usize::MAX;
+        //}
         // self.estimate.values_mut().for_each(|v| *v = usize::MAX);
-    }
-
-    pub fn stabilize(&mut self) {
-        // self.reset = false;
     }
 
     pub fn get_time(&self) -> usize {
@@ -158,6 +194,10 @@ where
     pub fn receive_msg(&mut self, from: T, core: usize, timestamp: usize) {
         let mut less_than = false;
         let mut is_reset = false;
+
+        // if self.id.unwrap() == 6498.into() {
+        //     eprintln!("\t\tEEEEH");
+        // }
 
         match self.estimate.get(&from) {
             Some(&est) => {
@@ -178,6 +218,7 @@ where
             if t < self.coreness {
                 self.coreness = t;
                 self.changed = true;
+                self.activated = true;
             }
         }
     }
@@ -237,6 +278,7 @@ where
             Some(_) => {
                 if self.changed {
                     self.changed = false;
+                    // self.activated = true;
                     return Some((self.id.unwrap(), self.coreness, self.time));
                 }
                 return None;
@@ -260,8 +302,8 @@ where
             count: self.count.clone(),
             estimate: self.estimate.clone(),
             activation_function: self.activation_function.clone(),
-            reset: self.reset,
             time: self.time,
+            activated: self.activated,
         }
     }
 }
@@ -345,7 +387,7 @@ where
         let mut count = 0;
         self.nodes.iter().for_each(|n| {
             if n.get_id().is_some() {
-                count += 1
+                count += 1;
             }
         });
         count
@@ -355,16 +397,16 @@ where
         &self.nodes[id]
     }
 
-    pub fn set_m(&mut self, m: usize) {
-        self.edges = m;
-    }
-
     pub fn new_snapshot(&mut self, list: &Vec<(T, T)>) {
         self.nodes.iter_mut().for_each(|node| node.advance_time());
 
         let mut to_reset: HashSet<usize> = HashSet::new();
 
         for &(u, v) in list {
+            if u == v {
+                continue;
+            }
+
             match self.nodes[u.into()].get_id() {
                 Some(_) => (),
                 None => self.nodes[u.into()].set_id(u),
@@ -379,7 +421,11 @@ where
 
             to_reset.insert(u.into());
             to_reset.insert(v.into());
+
+            // self.edges += 2;
         }
+
+        // Ora bisogna rendere questo veramente dynamic
 
         for u in to_reset {
             self.nodes[u].reset();
@@ -394,9 +440,17 @@ where
         }
     }
 
+    pub fn get_m(&self) -> usize {
+        self.edges
+    }
+
+    pub fn set_m(&mut self, _edges: usize) {
+        self.edges = _edges;
+    }
+
     pub fn print_status(&self) {
         for node in &self.nodes {
-            if node.get_id().is_some() && node.get_id().unwrap() == 7288.into() {
+            if node.get_id().is_some() && node.get_id().unwrap() == 103.into() {
                 print!(
                     "Nodo: {} corenes: {} [",
                     node.get_id().unwrap(),
@@ -464,7 +518,6 @@ where
         let mut msgs_per_iteration: Vec<usize> = Vec::with_capacity(expected_iterations);
         let mut time_per_iteration: Vec<std::time::Duration> =
             Vec::with_capacity(expected_iterations);
-        println!("Expected iters: {expected_iterations}");
 
         // END: Statistics
         // END: Housekeeping
@@ -477,12 +530,12 @@ where
         for node in &mut self.nodes {
             if node.get_id().is_some() {
                 // assert!(node.coreness >= usize::MAX);
-                node.coreness = usize::MAX;
+                // node.coreness = usize::MAX;
                 // node.set_interval(ts, te, &activation_function);
                 let degree = node.deg(); //_interval();
                                          // Consider a node only if it is not isolated
                 if degree > 0 {
-                    //node.changed = true;
+                    node.changed = true;
                     node.coreness = degree;
                     node_queue.push(node.get_id().unwrap().into());
                 }
@@ -519,7 +572,6 @@ where
                     msg_queue.push((id, cness, timestamp));
                     num_of_msgs += 1;
                     msgs_per_iteration[num_iterations - 1] += 1;
-                    self.nodes[node].stabilize();
                 }
             }
 
@@ -556,14 +608,20 @@ where
             msg_queue.clear();
         }
 
-        // self.nodes.iter_mut().for_each(|v| v.stabilize());
+        let mut activated_nodes = 0;
+        self.nodes.iter_mut().for_each(|v| {
+            if v.activated {
+                activated_nodes += 1;
+                v.activated = false;
+            }
+        });
 
         (
             num_iterations,
             num_of_msgs,
             msgs_per_iteration,
             time_per_iteration,
-            0,
+            activated_nodes, // Raccogliere statistiche su questo
         )
     }
 

@@ -124,7 +124,9 @@ where
         //    if self.deg() > 0 {
         //self.coreness = self.deg();
         //    } else {
-        self.coreness = usize::MAX;
+        if self.deg() == 0 {
+            self.coreness = usize::MAX;
+        }
         //    }
         // }
 
@@ -178,12 +180,12 @@ where
         // if self.id.unwrap() == 6498.into() {
         //     eprintln!("Weeee");
         // }
-        // if self.deg() > 0 {
-        //     self.coreness = self.deg();
-        //     self.changed = true;
-        // } else {
-        self.coreness = usize::MAX;
-        //}
+        if self.deg() > 0 {
+            self.coreness = self.deg();
+            self.changed = true;
+        } else {
+            self.coreness = usize::MAX;
+        }
         // self.estimate.values_mut().for_each(|v| *v = usize::MAX);
     }
 
@@ -527,16 +529,16 @@ where
         let mut go_on = true; // True if at least one node has to send a message
         let mut node_queue: Vec<usize> = Vec::with_capacity(self.get_n());
 
-        for node in &mut self.nodes {
+        for node in &self.nodes {
             if node.get_id().is_some() {
                 // assert!(node.coreness >= usize::MAX);
                 // node.coreness = usize::MAX;
                 // node.set_interval(ts, te, &activation_function);
-                let degree = node.deg(); //_interval();
-                                         // Consider a node only if it is not isolated
-                if degree > 0 {
-                    node.changed = true;
-                    node.coreness = degree;
+                // let degree = node.deg(); //_interval();
+                // Consider a node only if it is not isolated
+                if node.has_changed() {
+                    // node.changed = true;
+                    // node.coreness = degree;
                     node_queue.push(node.get_id().unwrap().into());
                 }
             }
