@@ -20,6 +20,9 @@ where
     activation_function: F,
     time: usize,
     activated: bool,
+    dirty: bool,
+    paused: bool,
+    last_sent: usize,
 }
 
 impl<T, F> AliveNode<T, F>
@@ -47,6 +50,9 @@ where
             activation_function: af,
             time: 0,
             activated: false,
+            paused: false,
+            dirty: false,
+            last_sent: 0,
         }
     }
 
@@ -67,6 +73,9 @@ where
     }
 
     pub fn get_coreness(&self) -> usize {
+        if self.get_id().is_none() {
+            return usize::MAX;
+        }
         self.coreness
     }
 
@@ -74,12 +83,19 @@ where
         self.neighbors
             .keys()
             .cloned()
-            .filter(|key| (self.activation_function)(&self.neighbors[key]))
+            .filter(|key| {
+                // Get only the last self.memory_size elem
+                (self.activation_function)(
+                    &self.neighbors[key]
+                        [self.neighbors[key].len().saturating_sub(self.memory_size)..]
+                        .to_bitvec(),
+                )
+            })
             .collect()
     }
 
     pub fn apply_f(&self, who: &BitVec) -> bool {
-        (self.activation_function)(who)
+        (self.activation_function)(&who[who.len().saturating_sub(self.memory_size)..].to_bitvec())
     }
     pub fn has_changed(&self) -> bool {
         if self.id.is_some() {
@@ -89,104 +105,103 @@ where
     }
 
     pub fn advance_time(&mut self) {
-        let mut to_remove = vec![];
-        // if self.id.unwrap_or(0.into()) == 6498.into() {
-        //     print!(
-        //         "Nodo: {} corenes: {} [",
-        //         self.get_id().unwrap(),
-        //         self.coreness
-        //     );
-        //     for neigh in &self.neighbors {
-        //         print!("{} - {:} {}, ", neigh.0, neigh.1, self.apply_f(neigh.1));
-        //     }
-        //     print!("la sua estimate è: {:?}", self.estimate);
-        //     println!("]");
-        // }
-
-        let old_degree = self.deg();
-
-        for (neighbor, bitvec) in self.neighbors.iter_mut() {
-            assert!(bitvec.len() == self.memory_size);
-            bitvec.shift_left(1);
-            if bitvec.not_any() {
-                to_remove.push(*neighbor);
-            }
-        }
-
-        for neighbor in to_remove {
-            self.neighbors.remove(&neighbor);
-            self.estimate.remove(&neighbor);
-        }
-
         self.time += 1;
-
-        //if self.deg() != old_degree {
-        //    if self.deg() > 0 {
-        //self.coreness = self.deg();
-        //    } else {
-        if self.deg() == 0 {
-            self.coreness = usize::MAX;
+        for neigh in self.neighbors.values_mut() {
+            neigh.push(false);
         }
-        //    }
-        // }
-
-        // if self.id.unwrap_or(0.into()) == 6498.into() {
-        //     print!(
-        //         "E DOPO È Nodo: {} corenes: {} [",
-        //         self.get_id().unwrap(),
-        //         self.coreness
-        //     );
-        //     for neigh in &self.neighbors {
-        //         print!("{} - {:} {}, ", neigh.0, neigh.1, self.apply_f(neigh.1));
-        //     }
-        //     print!("la sua estimate è: {:?}", self.estimate);
-        //     println!("]");
-        // }
     }
 
     pub fn add_neighbor_latest_time(&mut self, neighbor: T) {
         self.neighbors
             .entry(neighbor)
-            .and_modify(|bits| {
-                bits.last_mut().unwrap().set(true);
-                if !(self.activation_function)(bits) {
-                    self.estimate.remove(&neighbor);
-                    // Se il neighbor non è più raggiungibile, lo tolgo
-                } else {
-                    // Se resta raggiungibile, non fare niente
-                    // Se lo avevo tolto, lo reinserisco con infinito
+            .and_modify(|bitv| {
+                bitv.last_mut().unwrap().set(true);
+                if (self.activation_function)(
+                    &bitv[bitv.len().saturating_sub(self.memory_size)..].to_bitvec(),
+                ) {
                     self.estimate
-                        .entry(neighbor)
-                        .or_insert((usize::MAX, self.time));
+                        .entry(neighbor) // se c'è già non faccio niente
+                        .or_insert_with(|| {
+                            self.dirty = true;
+                            (usize::MAX, self.time)
+                        }); // Altrimenti lo inserisco nuovo nell'estimate
                 }
             })
             .or_insert_with(|| {
-                let mut bitvec = BitVec::with_capacity(self.memory_size);
-                bitvec.resize(self.memory_size, false);
-                bitvec.last_mut().unwrap().set(true);
-                if (self.activation_function)(&bitvec) {
-                    self.estimate.insert(neighbor, (usize::MAX, self.time));
+                let mut bitv = bitvec![0; self.time];
+                bitv.last_mut().unwrap().set(true);
+                if (self.activation_function)(
+                    &bitv[bitv.len().saturating_sub(self.memory_size)..].to_bitvec(),
+                ) {
+                    self.estimate
+                        .entry(neighbor) // se c'è già non faccio niente
+                        .or_insert_with(|| {
+                            self.dirty = true;
+                            (usize::MAX, self.time)
+                        }); // Altrimenti lo inserisco nuovo nell'estimate
                 }
-                bitvec
+                bitv
             });
-
-        self.count.resize(self.neighbors.len() + 1, 0);
     }
 
     pub fn reset(&mut self) {
-        if self.id.is_none() {
-            return;
+        if self.id.is_some() {
+            let my_neighs = self.neighs();
+            let keys: Vec<T> = self.estimate.keys().cloned().collect();
+            let mut lost_neigh = false;
+
+            // if self.id.unwrap() == 1103.into() {
+            //     println!("sono l' {}", self.id.unwrap());
+            // }
+
+            for neigh in &keys {
+                if !my_neighs.contains(neigh) {
+                    self.estimate.remove(neigh);
+                    lost_neigh = true;
+                    // if self.id.unwrap() == 1103.into() {
+                    //     println!("\tho perso un neigh, avevo coreness {}", self.coreness);
+                    // }
+                }
+            }
+
+            if self.dirty {
+                self.coreness = self.deg();
+                self.changed = true;
+                self.dirty = false;
+                // if self.id.unwrap() == 6841.into() || self.id.unwrap() == 1103.into() {
+                //     println!("\tripristino la coreness al deg cioè {}", self.coreness);
+                // }
+            } else if lost_neigh {
+                let old_cness = self.coreness;
+                self.coreness = self.comp_coreness();
+                if self.coreness == 0 {
+                    self.coreness = usize::MAX;
+                } else if self.coreness != old_cness {
+                    self.changed = true;
+                    // if self.id.unwrap() == 6841.into() {
+                    //     println!(
+                    //     "\tnuova coreness diversa da old coreness cioè {} diverso da {old_cness}",
+                    //     self.coreness
+                    // );
+                    // }
+                }
+            } /*  else if self.time > self.last_sent + 1 {
+                  self.coreness = self.deg();
+                  self.estimate.values_mut().for_each(|e| e.0 = usize::MAX);
+                  self.changed = true;
+              }*/
+
+            // self.changed = true;
+            // self.coreness = self.deg();
+            // if self.coreness == 0 {
+            //     self.coreness = usize::MAX;
+            // }
+            // if self.id.unwrap() == 1.into() {
+            //     println!("Sono passato di qui?");
+            // }
+
+            self.count.resize(self.estimate.len() + 1, 0);
         }
-        // if self.id.unwrap() == 6498.into() {
-        //     eprintln!("Weeee");
-        // }
-        if self.deg() > 0 {
-            self.coreness = self.deg();
-            self.changed = true;
-        } else {
-            self.coreness = usize::MAX;
-        }
-        // self.estimate.values_mut().for_each(|v| *v = usize::MAX);
     }
 
     pub fn get_time(&self) -> usize {
@@ -196,14 +211,28 @@ where
     pub fn receive_msg(&mut self, from: T, core: usize, timestamp: usize) {
         let mut less_than = false;
         let mut is_reset = false;
+        // if self.id.unwrap() == 1675.into() {
+        //     print!("sono il 1675, ricevo da {from} il valore {core} con time {timestamp}. ");
+        //     println!("I miei neigh sono: ");
+        //     for neigh in &self.neighbors {
+        //         print!("{} - {:} {}, ", neigh.0, neigh.1, self.apply_f(neigh.1));
+        //     }
 
-        // if self.id.unwrap() == 6498.into() {
-        //     eprintln!("\t\tEEEEH");
+        //     print!("la sua estimate è: {:?}", self.estimate);
+        //     println!("");
+        // }
+
+        // if self.id.unwrap() == 6841.into()
+        //     || from == 1103.into()
+        //     || self.id.unwrap() == 1103.into()
+        //     || from == 6841.into()
+        // {
+        //     println!("Sono il {} e ricevo: {core} da {from}", self.id.unwrap());
         // }
 
         match self.estimate.get(&from) {
             Some(&est) => {
-                if core < est.0 && timestamp == est.1 {
+                if (core < est.0 && timestamp == est.1) || (core > est.0 && timestamp > est.1) {
                     less_than = true;
                 } else if timestamp > est.1 {
                     is_reset = true;
@@ -212,64 +241,83 @@ where
             None => less_than = true,
         }
 
-        // Usando graph_temp.txt qui al primo passaggio la coreness di 0 torna a 3
-        // E non salirà più a 4
         if less_than || is_reset {
             self.estimate.insert(from, (core, timestamp));
-            let t = self.compute_index(); // Compute index
-            if t < self.coreness {
+            // println!("adesso la estimate è: {:?} ", self.estimate);
+            let t = self.comp_coreness(); // Compute index
+                                          // println!(
+                                          //     "nodo: {}, t = {t}, comp_coreness = {}, my degree = {}",
+                                          //     self.id.unwrap(),
+                                          //     self.comp_coreness(),
+                                          //     self.deg()
+                                          // );
+                                          // if self.id.unwrap() == 6841.into()
+                                          //     || self.id.unwrap() == 1103.into()
+                                          //     || from == 1103.into()
+                                          // {
+                                          //     println!(
+                                          //         "[{}] comp coreness: {}, my estimate: {:?}",
+                                          //         self.id.unwrap(),
+                                          //         t,
+                                          //         self.estimate
+                                          //     );
+                                          // }
+            if t != self.coreness {
+                // if self.id.unwrap() == 6841.into() || self.id.unwrap() == 1103.into() {
+                //     println!(
+                //     "Il nodo {} cambia la sue coreness in {} (prima era {}) dopo aver ricevuto ({from},{core})",
+                //     self.id.unwrap(),
+                //     t,self.coreness);
+                // }
+                if t < self.coreness {
+                    self.paused = true;
+                    // if self.id.unwrap() == 6841.into() || self.id.unwrap() == 1103.into() {
+                    //     println!("Il nodo {} si mette in pausa", self.id.unwrap());
+                    // }
+                }
                 self.coreness = t;
+
                 self.changed = true;
                 self.activated = true;
             }
         }
     }
 
-    pub fn compute_index(&mut self) -> usize {
-        //let mut count = vec![0; self.coreness + 1];
-        self.count.fill(0);
+    pub fn comp_coreness(&mut self) -> usize {
+        let mut count = vec![0; self.estimate.len() + 1];
 
-        // Non aggiorno effettivamente la mia stima finché non ho ricevuto aggiornamento da tutti gli altri
-        if self.neighs().iter().any(|e| self.estimate[e].1 < self.time) {
-            return self.coreness;
-        }
-
-        // if self.estimate.iter().any(|e| (e.1).1 < self.time) {
-        //     return self.coreness;
-        // }
-        for neigh in self.neighs() {
-            //if self.estimate[&neigh].1 >= self.time {
-            //let mut j = self.coreness;
-            //if self.estimate[&neigh].1 >= self.time {
-            let j = std::cmp::min(self.coreness, self.estimate[&neigh].0);
-            //}
-            self.count[j] += 1;
-            //}
-        }
-        // for neigh in &self.neighbors {
-        //     if activation_function(neigh.1, ts, te) {
-        //         let j = std::cmp::min(
-        //             self.coreness,
-        //             self.estimate[neigh.0], //*(self.estimate.get(neigh).unwrap_or(&usize::MAX)),
-        //         );
-        //         self.count[j] += 1;
-        //     }
+        // if self.id.unwrap() == 1.into() {
+        //     print!("sono il 1 la mia coreness attuale è {} ", self.coreness);
         // }
 
-        let mut i = self.coreness;
-
-        while i > 0 {
-            self.count[i - 1] = self.count[i - 1] + self.count[i];
-            i -= 1;
+        for &core in self.estimate.values() {
+            if core.0 < usize::MAX {
+                if core.0 < count.len() {
+                    count[core.0] += 1;
+                } else {
+                    count[self.estimate.len()] += 1;
+                }
+            } else {
+                return std::cmp::min(self.coreness, self.deg());
+                //count[self.coreness] += 1;
+            }
         }
 
-        i = self.coreness;
-
-        while i > 0 && self.count[i] < i {
-            i -= 1;
+        let mut total = 0;
+        for i in (0..count.len()).rev() {
+            total += count[i];
+            if total >= i {
+                // if self.id.unwrap() == 1.into() {
+                //     println!("e quella nuova è {}", i);
+                // }
+                if i == 0 {
+                    return usize::MAX;
+                }
+                return i;
+            }
         }
-
-        i
+        //println!("\tMa io restituisco {}", self.deg());
+        self.deg()
     }
 
     // Alg 1 from Montresor paper
@@ -278,14 +326,34 @@ where
         match self.id {
             None => return None,
             Some(_) => {
-                if self.changed {
+                if self.changed && !self.paused {
+                    //if self.changed {
                     self.changed = false;
-                    // self.activated = true;
+                    self.activated = true;
+                    // if self.id.unwrap() == 6841.into() || self.id.unwrap() == 5417.into() {
+                    //     println!(
+                    //         "Sono il {} e invio adesso un messaggio con: (c={},t={})",
+                    //         self.id.unwrap(),
+                    //         self.coreness,
+                    //         self.time
+                    //     );
+                    // }
+                    self.last_sent = self.time;
                     return Some((self.id.unwrap(), self.coreness, self.time));
+                //}
+                } else if self.paused {
+                    self.paused = false;
+                    // if self.id.unwrap() == 1103.into() {
+                    //     println!("Sono pausato, non invio");
+                    // }
                 }
                 return None;
             }
         }
+    }
+
+    pub fn get_estimate(&self) -> Vec<T> {
+        self.estimate.keys().cloned().collect()
     }
 }
 
@@ -306,6 +374,9 @@ where
             activation_function: self.activation_function.clone(),
             time: self.time,
             activated: self.activated,
+            dirty: self.dirty,
+            paused: self.paused,
+            last_sent: self.last_sent,
         }
     }
 }
@@ -395,53 +466,6 @@ where
         count
     }
 
-    pub fn get_node(&self, id: usize) -> &AliveNode<T, F> {
-        &self.nodes[id]
-    }
-
-    pub fn new_snapshot(&mut self, list: &Vec<(T, T)>) {
-        self.nodes.iter_mut().for_each(|node| node.advance_time());
-
-        let mut to_reset: HashSet<usize> = HashSet::new();
-
-        for &(u, v) in list {
-            if u == v {
-                continue;
-            }
-
-            match self.nodes[u.into()].get_id() {
-                Some(_) => (),
-                None => self.nodes[u.into()].set_id(u),
-            }
-            match self.nodes[v.into()].get_id() {
-                Some(_) => (),
-                None => self.nodes[v.into()].set_id(v),
-            }
-
-            self.nodes[u.into()].add_neighbor_latest_time(v);
-            self.nodes[v.into()].add_neighbor_latest_time(u);
-
-            to_reset.insert(u.into());
-            to_reset.insert(v.into());
-
-            // self.edges += 2;
-        }
-
-        // Ora bisogna rendere questo veramente dynamic
-
-        for u in to_reset {
-            self.nodes[u].reset();
-            // self.nodes[v.into()].reset();
-
-            // for neigh_of_u in self.nodes[u].neighs() {
-            //     self.nodes[neigh_of_u.into()].reset();
-            // }
-            // for neigh_of_v in self.nodes[v.into()].neighs() {
-            //     self.nodes[neigh_of_v.into()].reset();
-            // }
-        }
-    }
-
     pub fn get_m(&self) -> usize {
         self.edges
     }
@@ -450,9 +474,39 @@ where
         self.edges = _edges;
     }
 
-    pub fn print_status(&self) {
-        for node in &self.nodes {
-            if node.get_id().is_some() && node.get_id().unwrap() == 103.into() {
+    pub fn get_node(&self, id: usize) -> &AliveNode<T, F> {
+        &self.nodes[id]
+    }
+
+    pub fn new_snapshot(&mut self, list: &Vec<(T, T)>) {
+        // Advance the timestamp for all nodes
+        self.nodes.iter_mut().for_each(|v| v.advance_time());
+
+        for &elem in list {
+            assert_ne!(elem.0, elem.1);
+            let u: usize = elem.0.into();
+            let v: usize = elem.1.into();
+
+            if self.nodes[u].get_id().is_none() {
+                self.nodes[u].set_id(elem.0);
+            }
+            if self.nodes[v].get_id().is_none() {
+                self.nodes[v].set_id(elem.1);
+            }
+
+            self.nodes[u].add_neighbor_latest_time(elem.1);
+            self.nodes[v].add_neighbor_latest_time(elem.0);
+            self.edges += 1;
+        }
+
+        self.nodes.iter_mut().for_each(|v| v.reset());
+    }
+
+    pub fn print_status(&mut self) {
+        for node in &mut self.nodes {
+            if node.get_id().is_some()
+                && (node.get_id().unwrap() == 1103.into() || node.get_id().unwrap() == 5590.into())
+            {
                 print!(
                     "Nodo: {} corenes: {} [",
                     node.get_id().unwrap(),
@@ -461,32 +515,17 @@ where
                 for neigh in &node.neighbors {
                     print!("{} - {:} {}, ", neigh.0, neigh.1, node.apply_f(neigh.1));
                 }
-                print!("la sua estimate è: {:?}", node.estimate);
-                println!("]");
+
+                print!(
+                    "i veri neighs ({}): {:?}, la sua estimate è: {:?}",
+                    node.neighs().len(),
+                    node.neighs(),
+                    node.estimate
+                );
+                println!("] coreness computata: {}", node.comp_coreness());
             }
         }
     }
-    // pub fn print_status(&self) {
-    //     for node in &self.nodes {
-    //         if node.get_id().is_some() {
-    //             let mut neighs = node.neighs();
-    //             if neighs.is_empty() {
-    //                 continue;
-    //             }
-    //             print!("{}: [", node.get_id().unwrap());
-    //             neighs.sort_unstable();
-    //             for neigh in &neighs {
-    //                 if neighs.len() > 1 {
-    //                     print!(", {}", neigh);
-    //                 } else {
-    //                     print!("{}", neigh);
-    //                 }
-    //             }
-    //             println!("]");
-    //         }
-    //     }
-    //     println!("!!");
-    // }
 
     pub fn get_neighs(&self, who: usize) -> Vec<usize> {
         let mut ans: Vec<usize> = self.nodes[who]
@@ -529,30 +568,24 @@ where
         let mut go_on = true; // True if at least one node has to send a message
         let mut node_queue: Vec<usize> = Vec::with_capacity(self.get_n());
 
-        for node in &self.nodes {
-            if node.get_id().is_some() {
-                // assert!(node.coreness >= usize::MAX);
-                // node.coreness = usize::MAX;
-                // node.set_interval(ts, te, &activation_function);
-                // let degree = node.deg(); //_interval();
-                // Consider a node only if it is not isolated
-                if node.has_changed() {
-                    // node.changed = true;
-                    // node.coreness = degree;
-                    node_queue.push(node.get_id().unwrap().into());
+        for node in &mut self.nodes {
+            if node.has_changed() {
+                if node.get_coreness() >= usize::MAX {
+                    let deg = node.deg();
+                    if deg > 0 {
+                        node.coreness = deg;
+                    } else {
+                        node.changed = false;
+                        continue; // Skip this node if it is isolated
+                    }
+                } else if node.deg() <= 0 {
+                    node.coreness = usize::MAX;
+                    node.changed = false;
+                    continue;
                 }
+                node_queue.push(node.get_id().unwrap().into());
             }
         }
-
-        // self.nodes.iter().for_each(|node| {
-        //     if node.has_changed() {
-        //         node_queue.push(node.get_id().unwrap().into());
-        //         go_on = true;
-        //         //node.stabilize();
-        //         // node.changed will be reset by the send_msg function (or the next initialization)
-        //     }
-        // });
-
         // END: Initialization
 
         // START: Main loop
@@ -561,6 +594,7 @@ where
 
         while go_on {
             // New iteration
+            // println!("Next iter");
             num_iterations += 1;
             msgs_per_iteration.push(0);
 

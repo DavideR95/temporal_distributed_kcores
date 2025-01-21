@@ -4,6 +4,7 @@ extern crate meval;
 use bitvec::prelude::*;
 use std::io::{BufRead, Write};
 
+mod completely_new_algorithm;
 mod dynamic_montresor;
 mod temporal_graph_memory;
 
@@ -32,8 +33,12 @@ fn main() {
     let mut montresor_stats = vec![];
     let mut old_montresor_stats = vec![];
     let intersection = |bitv: &BitVec| bitv.all();
+    let union = |bitv: &BitVec| bitv.any();
+    let half = |bitv: &BitVec| bitv.count_ones() >= (bitv.len() / 2);
 
     let func_name = "intersection";
+    //let func_name = "union";
+    //let func_name = "half";
 
     // ***** COMMAND LINE PARSING *****
 
@@ -99,7 +104,7 @@ fn main() {
             history_size,
             intersection, /* bitv.count_ones() > (bitv.len() / 2)) */
         );
-    dyn_graph.set_m(edges);
+    // dyn_graph.set_m(edges);
     galive.set_m(edges);
 
     // ***** END: GRAPH INSTANCES *****
@@ -108,7 +113,12 @@ fn main() {
 
     let mut old_cores_collection = vec![];
     let mut cores_collection = vec![];
+    let mut density: Vec<f32> = vec![];
     i = 0;
+    let mut mism: usize = 0;
+    let mut mism_coreness = 0;
+    let mut mism_per_epoch = vec![];
+    let mut mism_coreness_per_epoch = vec![];
     for timestamp in &buckets {
         // Add the new snapshot to the graph (batch of edges)
         print!("{i}/{}...\r", buckets.len());
@@ -116,54 +126,136 @@ fn main() {
         std::io::stdout().flush().expect("Error flushing");
         galive.new_snapshot(timestamp);
         // Run Montresor algorithm and gather statistics
-        // print!("Pre-montre i={i}");
-        // galive.print_status();
-        old_montresor_stats.push(galive.montresor_full());
-        old_cores_collection.push(galive.k_core_from_coreness());
-        // print!("Post-montre i={i}");
-        // galive.print_status();
-
-        //print!("dyngraph-pre: ");
-        dyn_graph.new_snapshot(timestamp);
-        //dyn_graph.print_status();
-        montresor_stats.push(dyn_graph.montresor_step());
-        cores_collection.push(dyn_graph.k_core_from_coreness());
-        // print!("dyngraph-post: ");
-        // dyn_graph.print_status();
-    }
-
-    let mut mism = 0;
-    let mut x: usize = 0;
-    let mut y: usize = 0;
-    let mut z: usize = 0;
-    for (old_core, core) in old_cores_collection.iter().zip(cores_collection.iter()) {
-        y = 0;
-        for (old_elem, elem) in old_core.iter().zip(core.iter()) {
-            z = 0;
-            for (old_sub_elem, sub_elem) in old_elem.iter().zip(elem.iter()) {
-                if old_sub_elem != sub_elem {
-                    // println!(
-                    //     "Mismatch found: old_sub_elem = {:?} (cness: {}), sub_elem = {:?} (cness: {})",
-                    //     old_sub_elem, sub_elem, galive.get_node(*old_sub_elem).get_coreness(), dyn_graph.get_node(*old_sub_elem).get_coreness()
-                    // );
-                    // // println!(
-                    // //     "Mismatch in vectors: old_elem = {:?} (cness: {}), elem = {:?} (cness",
-                    // //     old_elem, elem
-                    // // );
-                    mism += 1;
-                    eprintln!(
-                        "{old_sub_elem} vs. {sub_elem} --- x,y,z: {x} - {y} - {z}\n {:?} \n {:?}",
-                        old_elem, elem
-                    );
-                    // eprintln!("Mismatch found in sub-elements of core elements.");
-                }
-                z += 1;
-            }
-            y += 1;
+        if i >= history_size {
+            // print!("\nPre-montre i={i} ");
+            // galive.print_status();
+            old_montresor_stats.push(galive.montresor_full());
+            old_cores_collection.push(galive.k_core_from_coreness());
+            // print!("Post-montre i={i}");
+            // galive.print_status();
         }
-        x += 1;
+        dyn_graph.new_snapshot(timestamp);
+        if i >= history_size {
+            // print!("dyngraph-pre: ");
+            // dyn_graph.print_status();
+            montresor_stats.push(dyn_graph.montresor_step());
+            cores_collection.push(dyn_graph.k_core_from_coreness());
+            // print!("dyngraph-post: ");
+            // dyn_graph.print_status();
+        }
+        if i >= history_size {
+            mism_per_epoch.push(0);
+            mism_coreness_per_epoch.push(vec![]);
+            for v in 0..galive.get_n() {
+                if galive.get_node(v).get_coreness() != dyn_graph.get_node(v).get_coreness() {
+                    assert!(galive.get_node(v).get_id().unwrap() == v);
+                    mism += 1;
+
+                    *mism_per_epoch.last_mut().unwrap() += 1;
+
+                    mism_coreness +=
+                        galive.get_node(v).get_coreness() - dyn_graph.get_node(v).get_coreness();
+
+                    mism_coreness_per_epoch.last_mut().unwrap().push(
+                        galive.get_node(v).get_coreness() - dyn_graph.get_node(v).get_coreness(),
+                    );
+
+                    // println!("\n\n [it={i}] Errore: il nodo {v} doveva avere coreness {}, mentre invece ha coreness {}.",galive.get_node(v).get_coreness(),dyn_graph.get_node(v).get_coreness());
+                    // let mut v1 = galive.get_node(v).neighs();
+                    // let mut v2 = dyn_graph.get_node(v).neighs();
+                    // println!("Vicini di {v} nel vecchio: {:?}", {
+                    //     v1.sort();
+                    //     &v1
+                    // });
+                    // println!("Vicini di {v} nel nuovo: {:?}", {
+                    //     v2.sort();
+                    //     &v2
+                    // });
+                    // println!(
+                    //     "Coreness di 5590: {} supposed, {} actual ",
+                    //     galive.get_node(5590).get_coreness(),
+                    //     dyn_graph.get_node(5590).get_coreness()
+                    // );
+                    // panic!("iters: {}", montresor_stats.last().unwrap().0);
+                }
+            }
+        }
+        density.push(
+            (2. * timestamp.len() as f32)
+                / (dyn_graph.get_n() as f32 * (dyn_graph.get_n() as f32 - 1.)),
+        );
     }
-    println!("All cores collections match. {mism}");
+
+    if mism > 0 {
+        println!(
+        "\nMismatch totali: {mism}, errore medio per epoch: +-{}, errori per iterazione (media): {}",
+        mism_coreness / mism,
+        mism as f64 / buckets.len() as f64
+        );
+    } else {
+        println!("No mismatch found.");
+    }
+
+    // Jaccard similarity wrt previous bucket
+    let mut similarities = vec![0.0; buckets.len()]; // Inizializza il risultato con 0.0
+
+    for i in 1..buckets.len() {
+        let set1: std::collections::HashSet<_> = buckets[i].iter().cloned().collect();
+        let set2: std::collections::HashSet<_> = buckets[i - 1].iter().cloned().collect();
+
+        let intersection_size = set1.intersection(&set2).count();
+        let union_size = set1.union(&set2).count();
+
+        similarities[i] = if union_size == 0 {
+            0.0
+        } else {
+            intersection_size as f64 / union_size as f64
+        };
+    }
+
+    // let mut mism = 0;
+    // let mut x: usize = 0;
+    // let mut y: usize = 0;
+    // let mut z: usize = 0;
+
+    // assert_eq!(old_cores_collection.len(), cores_collection.len());
+    // for i in history_size..old_cores_collection.len() {
+    //     if old_cores_collection[i].len() != cores_collection[i].len() {
+    //         println!(
+    //             "\n\n La i è {i} e old è = {:?}\n\n{:?}",
+    //             old_cores_collection[i], cores_collection[i]
+    //         );
+    //         panic!("la i è {i}");
+    //     }
+    // }
+
+    // for (old_core, core) in old_cores_collection.iter().zip(cores_collection.iter()) {
+    //     y = 0;
+    //     for (old_elem, elem) in old_core.iter().zip(core.iter()) {
+    //         z = 0;
+    //         for (old_sub_elem, sub_elem) in old_elem.iter().zip(elem.iter()) {
+    //             //println!("a");
+    //             if !elem.contains(old_sub_elem) {
+    //                 println!(
+    //                     "Mismatch found: old_sub_elem = {:?} (cness: {}), sub_elem = {:?} (cness: {})",
+    //                     old_sub_elem, galive.get_node(*old_sub_elem).get_coreness(), sub_elem, dyn_graph.get_node(*old_sub_elem).get_coreness()
+    //                 );
+    //                 // // println!(
+    //                 // //     "Mismatch in vectors: old_elem = {:?} (cness: {}), elem = {:?} (cness",
+    //                 // //     old_elem, elem
+    //                 // // );
+    //                 mism += 1;
+    //                 eprintln!("{old_elem:?} vs. {elem:?} --- x,y,z: {x} - {y} - {z}",);
+    //                 panic!();
+    //                 // eprintln!("Mismatch found in sub-elements of core elements.");
+    //             }
+    //             z += 1;
+    //         }
+    //         y += 1;
+    //     }
+    //     x += 1;
+    // }
+    // println!("All cores collections match. {mism}");
 
     // ***** SAVE STATS TO FILE *****
 
@@ -188,6 +280,7 @@ fn main() {
     let mut outfile_alive = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(format!(
             "results/full_results_{}_{func_name}.csv",
             graph_name.to_string_lossy()
@@ -197,6 +290,7 @@ fn main() {
     let mut outfile_dynamic = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(format!(
             "results/new_results_{}_{func_name}.csv",
             graph_name.to_string_lossy()
@@ -206,17 +300,18 @@ fn main() {
     if write_header_alive {
         writeln!(
             outfile_alive,
-            "nodes,edges,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter"
+            "nodes,edges,density,similarity_with_previous,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter"
         )
         .unwrap();
     }
 
     writeln!(
         outfile_dynamic,
-        "nodes,edges,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter"
+        "nodes,edges,density,similarity_with_previous,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter,errors,mean_error,errors_per_iter"
     )
     .unwrap();
 
+    i = 0;
     old_montresor_stats.iter().for_each(|result| {
         // result.0 // num iter
         // result.1 // global num of msg
@@ -225,9 +320,11 @@ fn main() {
         // result.4 // nodes that have been activated during this execution, i.e. sent > 0 msgs
         writeln!(
             outfile_alive,
-            "{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\"",
+            "{},{},{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\"",
             galive.get_n(),
             galive.get_m(), // Total number of edges added to the graph
+            density[i],
+            similarities[i],
             snap_length,
             buckets.len(),
             history_size,
@@ -242,8 +339,10 @@ fn main() {
                 .collect::<Vec<u128>>(),
         )
         .unwrap();
+        i += 1;
     });
 
+    i = 0;
     montresor_stats.iter().for_each(|result| {
         // result.0 // num iter
         // result.1 // global num of msg
@@ -252,9 +351,11 @@ fn main() {
         // result.4 // nodes that have been activated during this execution, i.e. sent > 0 msgs
         writeln!(
             outfile_dynamic,
-            "{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\"",
+            "{},{},{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\",{},{},{}",
             dyn_graph.get_n(),
             dyn_graph.get_m(), // Total number of edges added to the graph
+            density[i],
+            similarities[i],
             snap_length,
             buckets.len(),
             history_size,
@@ -267,9 +368,21 @@ fn main() {
                 .iter()
                 .map(|d| d.as_millis())
                 .collect::<Vec<u128>>(),
+            mism_per_epoch[i],
+            if mism_coreness_per_epoch[i].is_empty() {
+                0.0
+            } else {
+                mism_coreness_per_epoch[i].iter().sum::<usize>() as f64
+                    / mism_coreness_per_epoch[i].len() as f64
+            }, //if mism > 0 { mism_coreness / mism } else { 0 },
+            mism as f64 / buckets.len() as f64,
         )
         .unwrap();
+        i += 1;
     });
+
+    outfile_dynamic.flush().unwrap();
+    outfile_alive.flush().unwrap();
 
     println!("All done.");
 }
