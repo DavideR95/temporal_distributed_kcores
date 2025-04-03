@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "run kcore with two params",
+            "label": "run main",
             "type": "shell",
             "command": "cargo",
             "args": [
@@ -43,13 +43,13 @@
             "id": "graph",
             "type": "promptString",
             "description": "Path del grafo di input",
-            "default": "/media/hd/rucci-hd/dataset/temporal/"
+            "default": "/media/hd/rucci-hd/dataset/temporal/as-733/as-733-complete.txt"
         },
         {
             "id": "snaplen",
             "type": "promptString",
             "description": "Lunghezza in secondi degli snapshot",
-            "default": "86400"
+            "default": "7"
         }
     ]
 }

@@ -21,6 +21,7 @@ where
     estimate: HashMap<T, usize>, // First value: estimate
     activation_function: F,
     activated: bool,
+    old_coreness: usize,
 }
 
 impl<T, F> AliveNode<T, F>
@@ -47,6 +48,7 @@ where
             memory_size: _memory_size,
             activation_function: af,
             activated: false,
+            old_coreness: usize::MAX,
         }
     }
 
@@ -94,6 +96,8 @@ where
 
     pub fn advance_time(&mut self) {
         let mut to_remove = vec![];
+
+        self.old_coreness = self.coreness;
 
         // self.estimate.clear();
 
@@ -232,7 +236,7 @@ where
             Some(_) => {
                 if self.changed {
                     self.changed = false;
-                    // self.activated = true;
+                    self.activated = true;
                     return Some((self.id.unwrap(), self.coreness));
                 }
                 return None;
@@ -257,6 +261,7 @@ where
             estimate: self.estimate.clone(),
             activation_function: self.activation_function.clone(),
             activated: self.activated,
+            old_coreness: self.old_coreness,
         }
     }
 }
@@ -423,6 +428,22 @@ where
         }
     }
 
+    pub fn changed_coreness_count(&self) -> (usize, usize) {
+        let mut count = 0;
+        let mut other_count = 0;
+        self.nodes.iter().for_each(|n| {
+            if n.id.is_some() && n.coreness != n.old_coreness {
+                count += 1;
+                //println!("{} vs {}", n.coreness, n.old_coreness);
+            }
+            if n.id.is_some() && n.coreness == usize::MAX && n.old_coreness < usize::MAX {
+                other_count += 1;
+            }
+        });
+        //println!("L'other è {other_count}");
+        (count, other_count)
+    }
+
     // pub fn print_status(&self) {
     //     for node in &self.nodes {
     //         if node.get_id().is_some() {
@@ -490,13 +511,14 @@ where
             if node.get_id().is_some() {
                 // assert!(node.coreness >= usize::MAX);
                 node.coreness = usize::MAX;
+                node.activated = false;
                 // node.set_interval(ts, te, &activation_function);
                 let degree = node.deg(); //_interval();
                                          // Consider a node only if it is not isolated
                 if degree > 0 {
                     node.changed = true;
                     node.coreness = degree;
-                    node.activated = true;
+                    //node.activated = true;
                     node.clear_estimate();
                     node_queue.push(node.get_id().unwrap().into());
                 }

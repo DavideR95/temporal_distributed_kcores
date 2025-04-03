@@ -2,6 +2,7 @@ extern crate bitvec;
 extern crate meval;
 
 use bitvec::prelude::*;
+use meval::FuncEvalError;
 use std::io::{BufRead, Write};
 
 mod completely_new_algorithm;
@@ -32,13 +33,19 @@ fn main() {
     let history_size: usize = 5;
     let mut montresor_stats = vec![];
     let mut old_montresor_stats = vec![];
+    // let mut new_algo_montresor_stat = vec![];
     let intersection = |bitv: &BitVec| bitv.all();
     let union = |bitv: &BitVec| bitv.any();
     let half = |bitv: &BitVec| bitv.count_ones() >= (bitv.len() / 2);
 
-    let func_name = "intersection";
-    //let func_name = "union";
-    //let func_name = "half";
+    let func_name = "union";
+    let edge_function = union; // RIPARTI DA QUI CON EMAIL
+
+    // let func_name = "union";
+    // let edge_function = union;
+
+    // let func_name = "half";
+    // let edge_function = half;
 
     // ***** COMMAND LINE PARSING *****
 
@@ -96,14 +103,21 @@ fn main() {
         temporal_graph_memory::AliveGraph::from_n_and_mem_size(
             max_nodes + 1,
             history_size,
-            intersection, /* bitv.count_ones() > (bitv.len() / 2)) */
+            edge_function, /* bitv.count_ones() > (bitv.len() / 2)) */
         );
     let mut dyn_graph: dynamic_montresor::AliveGraph<usize, _> =
         dynamic_montresor::AliveGraph::from_n_and_mem_size(
             max_nodes + 1,
             history_size,
-            intersection, /* bitv.count_ones() > (bitv.len() / 2)) */
+            edge_function, /* bitv.count_ones() > (bitv.len() / 2)) */
         );
+
+    // let mut new_graph: completely_new_algorithm::DynamicGraph<usize, _> =
+    //     completely_new_algorithm::DynamicGraph::from_n_and_mem_size(
+    //         max_nodes + 1,
+    //         history_size,
+    //         intersection,
+    //     );
     // dyn_graph.set_m(edges);
     galive.set_m(edges);
 
@@ -113,12 +127,23 @@ fn main() {
 
     let mut old_cores_collection = vec![];
     let mut cores_collection = vec![];
+    // let mut new_algo_cores_collection = vec![];
     let mut density: Vec<f32> = vec![];
+
     i = 0;
     let mut mism: usize = 0;
     let mut mism_coreness = 0;
     let mut mism_per_epoch = vec![];
     let mut mism_coreness_per_epoch = vec![];
+
+    let mut true_nodes_count = vec![];
+    let mut lower_bound = vec![];
+    let mut isolated_nodes = vec![];
+
+    let mut dyn_true_nodes_count = vec![];
+    let mut dyn_lower_bound = vec![];
+    let mut dyn_isolated_nodes = vec![];
+
     for timestamp in &buckets {
         // Add the new snapshot to the graph (batch of edges)
         print!("{i}/{}...\r", buckets.len());
@@ -131,6 +156,20 @@ fn main() {
             // galive.print_status();
             old_montresor_stats.push(galive.montresor_full());
             old_cores_collection.push(galive.k_core_from_coreness());
+            let lb = galive.changed_coreness_count();
+
+            // println!(
+            //     "[old] Nodes that have changed coreness: {}/{} ({} isolated, {} truly changed), activated: {}",
+            //     lb.0,
+            //     galive.get_n(),
+            //     lb.1,
+            //     lb.0-lb.1,
+            //     old_montresor_stats.iter().last().unwrap().4
+            // );
+
+            true_nodes_count.push(galive.get_n());
+            lower_bound.push(lb.0 - lb.1);
+            isolated_nodes.push(lb.1);
             // print!("Post-montre i={i}");
             // galive.print_status();
         }
@@ -140,8 +179,26 @@ fn main() {
             // dyn_graph.print_status();
             montresor_stats.push(dyn_graph.montresor_step());
             cores_collection.push(dyn_graph.k_core_from_coreness());
+            let lb = dyn_graph.changed_coreness_count();
+
+            // println!(
+            //     "[new] Nodes that have changed coreness: {}/{} ({} isolated, {} truly changed), activated: {}",
+            //     lb.0,
+            //     dyn_graph.get_n(),
+            //     lb.1,
+            //     lb.0-lb.1,
+            //     montresor_stats.iter().last().unwrap().4
+            // );
+            dyn_true_nodes_count.push(galive.get_n());
+            dyn_lower_bound.push(lb.0 - lb.1);
+            dyn_isolated_nodes.push(lb.1);
             // print!("dyngraph-post: ");
             // dyn_graph.print_status();
+        }
+        // new_graph.new_snapshot(timestamp);
+        if i >= history_size {
+            // new_algo_montresor_stat.push(new_graph.run());
+            // new_algo_cores_collection.push()
         }
         if i >= history_size {
             mism_per_epoch.push(0);
@@ -179,6 +236,7 @@ fn main() {
                     // panic!("iters: {}", montresor_stats.last().unwrap().0);
                 }
             }
+            // break;
         }
         density.push(
             (2. * timestamp.len() as f32)
@@ -195,6 +253,22 @@ fn main() {
     } else {
         println!("No mismatch found.");
     }
+
+    // println!("{:?}", galive.k_core_from_coreness());
+    return;
+
+    // for i in (0..cores_collection.len()).rev() {
+    //     for j in (0..cores_collection[i].len()).rev() {
+    //         if cores_collection[i][j].is_empty() && !old_cores_collection[i][j].is_empty() {
+    //             println!("Nope");
+    //         } else if !cores_collection[i][j].is_empty() && !old_cores_collection[i][j].is_empty() {
+    //             for x in &old_cores_collection[i][j] {
+    //                 assert_eq!(cores_collection[i][j], old_cores_collection[i][j]);
+    //             }
+    //             break;
+    //         }
+    //     }
+    // }
 
     // Jaccard similarity wrt previous bucket
     let mut similarities = vec![0.0; buckets.len()]; // Inizializza il risultato con 0.0
@@ -262,7 +336,7 @@ fn main() {
     let graph_os_string = graph_path.clone() + func_name;
     let graph_os_path = std::path::Path::new(&graph_os_string);
     let graph_name = graph_os_path.file_stem().unwrap();
-    let write_header_alive = true;
+    let write_header_alive = false;
 
     // If the results file did not exist, write the csv header too
     // if !std::path::Path::new(&format!(
@@ -278,9 +352,9 @@ fn main() {
     // STAMPARE RISULTATI DI DYNGRAPH E VEDERE SE COMBACIANO
 
     let mut outfile_alive = std::fs::OpenOptions::new()
-        .write(true)
+        .append(true)
         .create(true)
-        .truncate(true)
+        // .truncate(true)
         .open(format!(
             "results/full_results_{}_{func_name}.csv",
             graph_name.to_string_lossy()
@@ -288,9 +362,9 @@ fn main() {
         .unwrap();
 
     let mut outfile_dynamic = std::fs::OpenOptions::new()
-        .write(true)
+        .append(true)
         .create(true)
-        .truncate(true)
+        //.truncate(true)
         .open(format!(
             "results/new_results_{}_{func_name}.csv",
             graph_name.to_string_lossy()
@@ -300,16 +374,16 @@ fn main() {
     if write_header_alive {
         writeln!(
             outfile_alive,
-            "nodes,edges,density,similarity_with_previous,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter"
+            "nodes,edges,density,similarity_with_previous,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter,lower_bound,isolated"
         )
         .unwrap();
     }
 
-    writeln!(
-        outfile_dynamic,
-        "nodes,edges,density,similarity_with_previous,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter,errors,mean_error,errors_per_iter"
-    )
-    .unwrap();
+    // writeln!(
+    //     outfile_dynamic,
+    //     "nodes,edges,density,similarity_with_previous,bucket_length,bucket_num,mem_size,iters,total_msg,activated_nodes,msg_per_iter,time_per_iter,errors,mean_error,errors_per_iter,lower_bound,isolated"
+    // )
+    // .unwrap();
 
     i = 0;
     old_montresor_stats.iter().for_each(|result| {
@@ -320,8 +394,8 @@ fn main() {
         // result.4 // nodes that have been activated during this execution, i.e. sent > 0 msgs
         writeln!(
             outfile_alive,
-            "{},{},{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\"",
-            galive.get_n(),
+            "{},{},{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\",{},{}",
+            true_nodes_count[i],
             galive.get_m(), // Total number of edges added to the graph
             density[i],
             similarities[i],
@@ -337,6 +411,8 @@ fn main() {
                 .iter()
                 .map(|d| d.as_millis())
                 .collect::<Vec<u128>>(),
+            lower_bound[i],
+            isolated_nodes[i]
         )
         .unwrap();
         i += 1;
@@ -351,8 +427,8 @@ fn main() {
         // result.4 // nodes that have been activated during this execution, i.e. sent > 0 msgs
         writeln!(
             outfile_dynamic,
-            "{},{},{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\",{},{},{}",
-            dyn_graph.get_n(),
+            "{},{},{},{},{},{},{},{},{},{},\"{:?}\",\"{:?}\",{},{},{},{},{}",
+            dyn_true_nodes_count[i],
             dyn_graph.get_m(), // Total number of edges added to the graph
             density[i],
             similarities[i],
@@ -376,6 +452,8 @@ fn main() {
                     / mism_coreness_per_epoch[i].len() as f64
             }, //if mism > 0 { mism_coreness / mism } else { 0 },
             mism as f64 / buckets.len() as f64,
+            dyn_lower_bound[i],
+            dyn_isolated_nodes[i],
         )
         .unwrap();
         i += 1;

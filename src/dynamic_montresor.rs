@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -23,6 +23,7 @@ where
     dirty: bool,
     paused: bool,
     last_sent: usize,
+    old_coreness: usize,
 }
 
 impl<T, F> AliveNode<T, F>
@@ -53,6 +54,7 @@ where
             paused: false,
             dirty: false,
             last_sent: 0,
+            old_coreness: 0,
         }
     }
 
@@ -109,6 +111,7 @@ where
         for neigh in self.neighbors.values_mut() {
             neigh.push(false);
         }
+        self.old_coreness = self.coreness;
     }
 
     pub fn add_neighbor_latest_time(&mut self, neighbor: T) {
@@ -377,6 +380,7 @@ where
             dirty: self.dirty,
             paused: self.paused,
             last_sent: self.last_sent,
+            old_coreness: self.old_coreness,
         }
     }
 }
@@ -536,6 +540,21 @@ where
         ans.sort_unstable();
 
         ans
+    }
+
+    pub fn changed_coreness_count(&self) -> (usize, usize) {
+        let mut count = 0;
+        let mut isolated = 0;
+        self.nodes.iter().for_each(|n| {
+            if n.id.is_some() && n.coreness != n.old_coreness {
+                count += 1;
+            }
+            if n.id.is_some() && n.coreness == usize::MAX && n.old_coreness < usize::MAX {
+                isolated += 1;
+            }
+        });
+
+        (count, isolated)
     }
 
     pub fn montresor_step(
